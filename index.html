@@ -1,0 +1,986 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>SplitCheck - Делёж счётов</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4/dist/tesseract.min.js"></script>
+    <style>
+        * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+        :root {
+            --bg:#0f0f0f; --bg-card:#1a1a1a; --bg-hover:#2a2a2a;
+            --text:#ffffff; --text-secondary:#888888;
+            --accent:#1db954; --accent-hover:#1ed760;
+            --danger:#e22134; --warning:#f59e0b; --border:#333333;
+        }
+        body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; background:var(--bg); color:var(--text); height:100vh; overflow:hidden; display:flex; flex-direction:column; }
+        .header { padding:16px 20px; background:var(--bg-card); border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; flex-shrink:0; gap:8px; }
+        .header h1 { font-size:20px; font-weight:700; flex:1; text-align:center; }
+        .header-btn { width:36px; height:36px; border-radius:50%; background:var(--bg-hover); border:none; color:var(--text); display:flex; align-items:center; justify-content:center; cursor:pointer; font-size:20px; flex-shrink:0; }
+        .header-btn.danger { background:rgba(226,33,52,0.15); color:var(--danger); }
+        .content { flex:1; overflow-y:auto; padding:16px; }
+        .content::-webkit-scrollbar { width:4px; }
+        .content::-webkit-scrollbar-thumb { background:var(--border); border-radius:2px; }
+        .card { background:var(--bg-card); border-radius:16px; padding:16px; margin-bottom:12px; border:1px solid var(--border); }
+        .card-title { font-size:18px; font-weight:600; margin-bottom:4px; }
+        .card-subtitle { font-size:14px; color:var(--text-secondary); }
+        .trip-item { display:flex; align-items:center; gap:12px; padding:16px; background:var(--bg-card); border-radius:16px; margin-bottom:12px; border:1px solid var(--border); }
+        .trip-icon { width:48px; height:48px; border-radius:12px; background:linear-gradient(135deg,#667eea 0%,#764ba2 100%); display:flex; align-items:center; justify-content:center; font-size:24px; flex-shrink:0; }
+        .trip-info { flex:1; cursor:pointer; }
+        .trip-name { font-size:16px; font-weight:600; margin-bottom:4px; }
+        .trip-meta { font-size:13px; color:var(--text-secondary); }
+        .trip-delete { width:36px; height:36px; border-radius:50%; background:rgba(226,33,52,0.1); border:none; color:var(--danger); display:flex; align-items:center; justify-content:center; cursor:pointer; font-size:18px; flex-shrink:0; }
+        .btn { width:100%; padding:16px; border-radius:12px; border:none; font-size:16px; font-weight:600; cursor:pointer; transition:all 0.2s; display:flex; align-items:center; justify-content:center; gap:8px; margin-bottom:12px; }
+        .btn-primary { background:var(--accent); color:#000; }
+        .btn-primary:active { transform:scale(0.98); background:var(--accent-hover); }
+        .btn-secondary { background:var(--bg-hover); color:var(--text); }
+        .btn-secondary:active { background:var(--border); }
+        .btn-danger { background:var(--danger); color:#fff; }
+        .btn-danger:active { transform:scale(0.98); opacity:0.9; }
+        .input { width:100%; padding:14px 16px; border-radius:12px; border:1px solid var(--border); background:var(--bg-hover); color:var(--text); font-size:16px; outline:none; margin-bottom:12px; }
+        .input:focus { border-color:var(--accent); }
+        .input::placeholder { color:var(--text-secondary); }
+        .check-item { background:var(--bg-card); border-radius:16px; padding:16px; margin-bottom:12px; border:1px solid var(--border); }
+        .check-header { display:flex; justify-content:space-between; align-items:start; margin-bottom:12px; gap:8px; }
+        .check-title { font-size:16px; font-weight:600; }
+        .check-amount { font-size:18px; font-weight:700; color:var(--accent); white-space:nowrap; }
+        .check-meta { font-size:13px; color:var(--text-secondary); margin-bottom:12px; }
+        .check-payer { display:inline-flex; align-items:center; gap:6px; background:var(--bg-hover); padding:6px 12px; border-radius:20px; font-size:13px; }
+        .check-actions { display:flex; gap:8px; margin-top:12px; }
+        .check-action-btn { flex:1; padding:10px; border-radius:10px; border:none; font-size:13px; font-weight:600; cursor:pointer; }
+        .check-action-edit { background:var(--bg-hover); color:var(--text); }
+        .check-action-delete { background:rgba(226,33,52,0.12); color:var(--danger); }
+        .items-list { margin-top:12px; padding-top:12px; border-top:1px solid var(--border); }
+        .item-row { display:flex; justify-content:space-between; align-items:center; padding:8px 0; font-size:14px; gap:8px; }
+        .item-row-info { flex:1; min-width:0; }
+        .item-name { font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .item-split { font-size:12px; color:var(--text-secondary); }
+        .item-price { font-weight:600; white-space:nowrap; }
+        .item-delete-btn { width:28px; height:28px; border-radius:50%; background:rgba(226,33,52,0.1); border:none; color:var(--danger); font-size:14px; cursor:pointer; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+        .people-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(80px,1fr)); gap:8px; margin:12px 0; }
+        .person-chip { display:flex; flex-direction:column; align-items:center; gap:4px; padding:12px 8px; border-radius:12px; background:var(--bg-hover); border:2px solid transparent; cursor:pointer; transition:all 0.2s; }
+        .person-chip.selected { border-color:var(--accent); background:rgba(29,185,84,0.1); }
+        .person-chip .avatar { width:40px; height:40px; border-radius:50%; background:linear-gradient(135deg,#667eea 0%,#764ba2 100%); display:flex; align-items:center; justify-content:center; font-size:18px; }
+        .person-chip .name { font-size:12px; text-align:center; }
+        .split-types { display:flex; gap:8px; margin:12px 0; overflow-x:auto; padding-bottom:4px; }
+        .split-type { padding:10px 16px; border-radius:20px; background:var(--bg-hover); border:2px solid transparent; cursor:pointer; white-space:nowrap; font-size:14px; transition:all 0.2s; flex-shrink:0; }
+        .split-type.active { border-color:var(--accent); background:rgba(29,185,84,0.1); }
+        .summary-card { background:linear-gradient(135deg,#1a1a1a 0%,#2a2a2a 100%); border-radius:20px; padding:24px; margin-bottom:16px; border:1px solid var(--border); }
+        .summary-title { font-size:14px; color:var(--text-secondary); margin-bottom:8px; text-transform:uppercase; letter-spacing:1px; }
+        .summary-amount { font-size:36px; font-weight:700; color:var(--accent); }
+        .balance-list { margin-top:16px; }
+        .balance-row { display:flex; justify-content:space-between; align-items:center; padding:12px 0; border-bottom:1px solid var(--border); }
+        .balance-row:last-child { border-bottom:none; }
+        .balance-name { display:flex; align-items:center; gap:10px; }
+        .balance-avatar { width:36px; height:36px; border-radius:50%; background:linear-gradient(135deg,#667eea 0%,#764ba2 100%); display:flex; align-items:center; justify-content:center; font-size:16px; flex-shrink:0; }
+        .balance-value { font-size:16px; font-weight:600; }
+        .balance-value.positive { color:var(--accent); }
+        .balance-value.negative { color:var(--danger); }
+        .photo-upload { border:2px dashed var(--border); border-radius:16px; padding:40px 20px; text-align:center; cursor:pointer; transition:all 0.2s; margin-bottom:16px; }
+        .photo-upload:active { border-color:var(--accent); background:rgba(29,185,84,0.05); }
+        .photo-upload-icon { font-size:48px; margin-bottom:12px; }
+        .photo-upload-text { font-size:16px; color:var(--text-secondary); }
+        .ocr-loading { text-align:center; padding:40px 20px; }
+        .ocr-spinner { width:48px; height:48px; border:3px solid var(--border); border-top-color:var(--accent); border-radius:50%; animation:spin 1s linear infinite; margin:0 auto 16px; }
+        @keyframes spin { to { transform:rotate(360deg); } }
+        .modal-overlay { position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.8); z-index:1000; display:none; align-items:flex-end; justify-content:center; }
+        .modal-overlay.active { display:flex; }
+        .modal { background:var(--bg-card); border-radius:24px 24px 0 0; width:100%; max-height:90vh; overflow-y:auto; padding:24px 20px; animation:slideUp 0.3s ease; }
+        @keyframes slideUp { from{transform:translateY(100%)} to{transform:translateY(0)} }
+        .modal-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; }
+        .modal-title { font-size:20px; font-weight:700; }
+        .modal-close { width:36px; height:36px; border-radius:50%; background:var(--bg-hover); border:none; color:var(--text); display:flex; align-items:center; justify-content:center; cursor:pointer; font-size:20px; }
+        /* Confirm modal */
+        .confirm-modal { background:var(--bg-card); border-radius:24px 24px 0 0; width:100%; padding:28px 20px 32px; animation:slideUp 0.25s ease; }
+        .confirm-title { font-size:18px; font-weight:700; margin-bottom:8px; }
+        .confirm-text { font-size:14px; color:var(--text-secondary); margin-bottom:24px; line-height:1.5; }
+        .confirm-actions { display:flex; gap:10px; }
+        .confirm-actions .btn { margin-bottom:0; }
+        .toast { position:fixed; bottom:24px; left:50%; transform:translateX(-50%) translateY(80px); background:#2a2a2a; color:#fff; padding:12px 20px; border-radius:12px; font-size:14px; z-index:2000; transition:transform 0.3s ease; max-width:calc(100vw - 32px); text-align:center; border:1px solid var(--border); pointer-events:none; }
+        .toast.show { transform:translateX(-50%) translateY(0); }
+        .empty-state { text-align:center; padding:60px 20px; }
+        .empty-icon { font-size:64px; margin-bottom:16px; }
+        .empty-title { font-size:20px; font-weight:600; margin-bottom:8px; }
+        .empty-text { font-size:14px; color:var(--text-secondary); margin-bottom:24px; }
+        .hidden { display:none !important; }
+        .transaction-row { display:flex; justify-content:space-between; align-items:center; padding:14px 16px; background:var(--bg-hover); border-radius:12px; margin-bottom:8px; gap:8px; }
+        .transaction-from { display:flex; align-items:center; gap:8px; }
+        .transaction-arrow { color:var(--text-secondary); font-size:20px; flex-shrink:0; }
+        .transaction-to { display:flex; align-items:center; gap:8px; }
+        .transaction-amount { font-weight:700; color:var(--accent); margin-left:auto; white-space:nowrap; }
+        .quantity-input { display:flex; align-items:center; gap:8px; margin-top:8px; }
+        .qty-field { width:80px; padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--bg-hover); color:var(--text); font-size:14px; text-align:center; }
+        .qty-label { font-size:14px; color:var(--text-secondary); }
+        .screen { display:none; flex-direction:column; height:100vh; }
+        .screen.active { display:flex; }
+        .person-tag { display:inline-flex; align-items:center; gap:6px; background:var(--bg-hover); padding:5px 10px; border-radius:20px; font-size:13px; margin:3px; }
+        .person-tag-remove { background:none; border:none; color:var(--text-secondary); cursor:pointer; font-size:16px; padding:0; line-height:1; }
+        .section-label { font-size:14px; color:var(--text-secondary); margin:16px 0 8px; }
+        .per-person-row { display:flex; justify-content:space-between; align-items:center; padding:10px 14px; background:var(--bg-hover); border-radius:10px; margin-bottom:6px; }
+        .per-person-name { font-size:14px; }
+        .per-person-amount { font-size:14px; font-weight:600; color:var(--text-secondary); }
+    </style>
+</head>
+<body>
+
+<div class="toast" id="toast"></div>
+
+<!-- Confirm modal (shared) -->
+<div class="modal-overlay" id="modal-confirm" onclick="handleOverlayClick(event)">
+    <div class="confirm-modal">
+        <div class="confirm-title" id="confirm-title">Удалить?</div>
+        <div class="confirm-text" id="confirm-text">Это действие нельзя отменить.</div>
+        <div class="confirm-actions">
+            <button class="btn btn-secondary" style="margin-bottom:0" onclick="closeModal()">Отмена</button>
+            <button class="btn btn-danger" style="margin-bottom:0" id="confirm-ok-btn">Удалить</button>
+        </div>
+    </div>
+</div>
+
+<!-- Modal: New Trip -->
+<div class="modal-overlay" id="modal-new-trip" onclick="handleOverlayClick(event)">
+    <div class="modal">
+        <div class="modal-header">
+            <div class="modal-title">Новая поездка</div>
+            <button class="modal-close" onclick="closeModal()">×</button>
+        </div>
+        <input type="text" class="input" id="trip-name-input" placeholder="Название (например: Дача май 2026)">
+        <div class="section-label">Участники</div>
+        <div id="trip-people-inputs">
+            <input type="text" class="input" placeholder="Имя 1">
+            <input type="text" class="input" placeholder="Имя 2">
+            <input type="text" class="input" placeholder="Имя 3">
+        </div>
+        <button class="btn btn-secondary" onclick="addPersonInput()" style="margin-bottom:12px;">+ Ещё участник</button>
+        <button class="btn btn-primary" onclick="createTrip()">Создать поездку</button>
+    </div>
+</div>
+
+<!-- Modal: Edit Trip -->
+<div class="modal-overlay" id="modal-edit-trip" onclick="handleOverlayClick(event)">
+    <div class="modal">
+        <div class="modal-header">
+            <div class="modal-title">Редактировать</div>
+            <button class="modal-close" onclick="closeModal()">×</button>
+        </div>
+        <div class="section-label">Название</div>
+        <input type="text" class="input" id="edit-trip-name" placeholder="Название поездки">
+        <div class="section-label">Участники</div>
+        <div id="edit-people-tags"></div>
+        <div style="display:flex;gap:8px;margin-bottom:12px;">
+            <input type="text" class="input" id="edit-new-person" placeholder="Добавить участника" style="margin-bottom:0;flex:1;">
+            <button class="btn btn-secondary" style="width:auto;margin-bottom:0;padding:14px 16px;" onclick="addEditPerson()">+</button>
+        </div>
+        <button class="btn btn-primary" onclick="saveEditTrip()">Сохранить</button>
+    </div>
+</div>
+
+<!-- Modal: Add Item -->
+<div class="modal-overlay" id="modal-add-item" onclick="handleOverlayClick(event)">
+    <div class="modal">
+        <div class="modal-header">
+            <div class="modal-title" id="add-item-title">Новая позиция</div>
+            <button class="modal-close" onclick="closeModal()">×</button>
+        </div>
+        <input type="text" class="input" id="new-item-name" placeholder="Название (например: Шашлык)">
+        <input type="number" class="input" id="new-item-price" placeholder="Сумма (₽)" inputmode="decimal">
+        <input type="text" class="input" id="new-item-qty" placeholder="Количество (необязательно, напр. 2 кг)">
+        <button class="btn btn-primary" onclick="confirmAddItem()">Добавить</button>
+    </div>
+</div>
+
+<!-- Modal: Edit Check -->
+<div class="modal-overlay" id="modal-edit-check" onclick="handleOverlayClick(event)">
+    <div class="modal">
+        <div class="modal-header">
+            <div class="modal-title">Редактировать чек</div>
+            <button class="modal-close" onclick="closeModal()">×</button>
+        </div>
+        <input type="text" class="input" id="edit-check-name" placeholder="Название чека">
+        <input type="number" class="input" id="edit-check-total" placeholder="Общая сумма (₽)" inputmode="decimal">
+        <div class="section-label">Кто платил?</div>
+        <div id="edit-check-payer"></div>
+        <button class="btn btn-primary" onclick="saveEditCheck()">Сохранить</button>
+    </div>
+</div>
+
+<!-- Screen: Trip List -->
+<div id="screen-trips" class="screen active">
+    <div class="header">
+        <div style="width:36px"></div>
+        <h1>💰 SplitCheck</h1>
+        <button class="header-btn" onclick="showModal('new-trip')">+</button>
+    </div>
+    <div class="content" id="trips-list"></div>
+</div>
+
+<!-- Screen: Trip Detail -->
+<div id="screen-trip" class="screen">
+    <div class="header">
+        <button class="header-btn" onclick="showTrips()">←</button>
+        <h1 id="trip-title">Поездка</h1>
+        <button class="header-btn" onclick="showEditTrip()" title="Редактировать">✏️</button>
+    </div>
+    <div class="content">
+        <div class="summary-card">
+            <div class="summary-title">Общий расход</div>
+            <div class="summary-amount" id="trip-total">0 ₽</div>
+            <div class="balance-list" id="trip-balance"></div>
+        </div>
+        <div id="checks-list"></div>
+        <button class="btn btn-primary" onclick="initAddCheck()">+ Добавить чек</button>
+    </div>
+</div>
+
+<!-- Screen: Add/Edit Check -->
+<div id="screen-add-check" class="screen">
+    <div class="header">
+        <button class="header-btn" onclick="showTrip()">←</button>
+        <h1 id="add-check-title">Новый чек</h1>
+        <div style="width:36px"></div>
+    </div>
+    <div class="content">
+        <div class="photo-upload" onclick="document.getElementById('photo-input').click()">
+            <div class="photo-upload-icon">📷</div>
+            <div class="photo-upload-text">Нажмите, чтобы сфоткать чек<br>или загрузить из галереи</div>
+        </div>
+        <input type="file" id="photo-input" accept="image/*" capture="environment" class="hidden" onchange="handlePhoto(event)">
+        <div class="ocr-loading hidden" id="ocr-loading">
+            <div class="ocr-spinner"></div>
+            <div>Распознаём чек...</div>
+        </div>
+        <div id="manual-entry">
+            <input type="text" class="input" id="check-name" placeholder="Название (например: Ужин в ресторане)">
+            <input type="number" class="input" id="check-total" placeholder="Общая сумма (₽)" inputmode="decimal">
+            <div class="section-label">Кто платил?</div>
+            <div id="payer-selector"></div>
+            <div class="section-label">Позиции чека</div>
+            <div id="items-container"></div>
+            <button class="btn btn-secondary" onclick="showModal('add-item')" style="margin-top:8px;margin-bottom:12px;">+ Добавить позицию</button>
+            <button class="btn btn-primary" onclick="saveCheck()">Сохранить чек</button>
+        </div>
+    </div>
+</div>
+
+<!-- Screen: Item Split -->
+<div id="screen-item-split" class="screen">
+    <div class="header">
+        <button class="header-btn" onclick="showScreen('add-check')">←</button>
+        <h1>Деление позиции</h1>
+        <div style="width:36px"></div>
+    </div>
+    <div class="content">
+        <div class="card">
+            <div class="card-title" id="split-item-name"></div>
+            <div class="card-subtitle" id="split-item-price"></div>
+        </div>
+        <div class="section-label">Тип деления</div>
+        <div class="split-types">
+            <div class="split-type active" onclick="setSplitType('equal')" data-type="equal">Поровну</div>
+            <div class="split-type" onclick="setSplitType('selected')" data-type="selected">Выбрать кто</div>
+            <div class="split-type" onclick="setSplitType('weight')" data-type="weight">По весу</div>
+            <div class="split-type" onclick="setSplitType('quantity')" data-type="quantity">По штукам</div>
+            <div class="split-type" onclick="setSplitType('personal')" data-type="personal">Личное</div>
+        </div>
+        <div id="split-people-container"></div>
+        <div id="split-weight-input" class="hidden">
+            <div class="section-label">Вес на каждого (кг)</div>
+            <div id="weight-inputs"></div>
+        </div>
+        <div id="split-quantity-input" class="hidden">
+            <div class="section-label">Количество штук</div>
+            <div id="quantity-inputs"></div>
+        </div>
+        <button class="btn btn-primary" onclick="saveItemSplit()" style="margin-top:20px;">Готово</button>
+    </div>
+</div>
+
+<!-- Screen: Settlement -->
+<div id="screen-settlement" class="screen">
+    <div class="header">
+        <button class="header-btn" onclick="showTrip()">←</button>
+        <h1>Кто кому должен</h1>
+        <div style="width:36px"></div>
+    </div>
+    <div class="content">
+        <div id="settlement-list"></div>
+        <button class="btn btn-primary" onclick="shareSettlement()" style="margin-top:16px;">📤 Скопировать и поделиться</button>
+        <button class="btn btn-secondary" onclick="showTrip()">← Вернуться и изменить</button>
+    </div>
+</div>
+
+<script>
+    const tg = window.Telegram?.WebApp;
+    if (tg) { tg.ready(); tg.expand(); }
+
+    let trips = [];
+    let currentTrip = null;
+    let currentCheck = null;
+    let currentCheckIndex = null; // for editing saved checks
+    let currentItemIndex = null;
+    let splitType = 'equal';
+    let editPeople = []; // temp list for trip editing
+
+    // ── Utils ──
+    function formatMoney(a) { return Math.round(a).toLocaleString('ru-RU') + ' ₽'; }
+
+    function showToast(msg, duration=2500) {
+        const el = document.getElementById('toast');
+        el.textContent = msg;
+        el.classList.add('show');
+        clearTimeout(el._t);
+        el._t = setTimeout(() => el.classList.remove('show'), duration);
+    }
+
+    function showConfirm(title, text, onOk) {
+        document.getElementById('confirm-title').textContent = title;
+        document.getElementById('confirm-text').textContent = text;
+        const btn = document.getElementById('confirm-ok-btn');
+        btn.onclick = () => { closeModal(); onOk(); };
+        showModal('confirm');
+    }
+
+    // ── Storage ──
+    function saveTrips() {
+        const data = JSON.stringify(trips);
+        try {
+            if (tg?.CloudStorage) tg.CloudStorage.setItem('splitcheck_trips', data);
+            else localStorage.setItem('splitcheck_trips', data);
+        } catch(e) { console.error(e); }
+    }
+
+    function loadTrips(cb) {
+        try {
+            if (tg?.CloudStorage) {
+                tg.CloudStorage.getItem('splitcheck_trips', (err, val) => {
+                    if (!err && val) { try { trips = JSON.parse(val); } catch { trips=[]; } }
+                    if (!trips?.length) loadDemoData();
+                    cb();
+                });
+            } else {
+                const s = localStorage.getItem('splitcheck_trips');
+                if (s) trips = JSON.parse(s);
+                if (!trips?.length) loadDemoData();
+                cb();
+            }
+        } catch(e) { loadDemoData(); cb(); }
+    }
+
+    function loadDemoData() {
+        trips = [{
+            id:1, name:'Дача май 2026', people:['Иван','Петр','Сергей','Олег'],
+            checks:[
+                { id:1, name:'Шашлык и продукты', total:1500, payer:'Иван', items:[
+                    {name:'Шашлык свиной',price:1000,quantity:'5 кг',splitType:'equal',shares:{}},
+                    {name:'Овощи на гриль',price:300,quantity:'2 кг',splitType:'equal',shares:{}},
+                    {name:'Пиво светлое',price:200,quantity:'4 бут',splitType:'selected',shares:{'Иван':1,'Петр':1}}
+                ]},
+                { id:2, name:'Бензин', total:600, payer:'Петр', items:[
+                    {name:'Бензин АИ-95',price:600,quantity:'20 л',splitType:'equal',shares:{}}
+                ]}
+            ]
+        }];
+        saveTrips();
+    }
+
+    // ── OCR ──
+    function smartParseOCR(text) {
+        const lines = text.split('\n').map(l=>l.trim()).filter(l=>l.length>0);
+        const items = [];
+        const ignoreWords = ['кассир','дата','время','инн','кпп','огрн','итого','всего','сумма','наличными','безналичными','сдача','чек','приход','расход','фп','фд','фн','заказ','стол','гость','официант','спасибо','ждем','снова','qr','код','site','www','http','email','тел','телефон','адрес','лицензия'];
+        const qtyPatterns = [
+            /(\d+[.,]?\d*)\s*(кг|г|гр|шт|штук|шт\.|л|мл|уп|упак|порц|порций|бут|бутылок|банок|пак|пакетов|литров|кг\.)/i,
+            /(\d+)\s*x\s*(\d+)/i, /x\s*(\d+)/i
+        ];
+        lines.forEach(line => {
+            if (!/\d/.test(line)) return;
+            const ll = line.toLowerCase();
+            for (let w of ignoreWords) if (ll.includes(w)) return;
+            if (/^\d{2}[./]\d{2}[./]\d{2,4}$/.test(line)) return;
+            if (/^\d{2}:\d{2}/.test(line)) return;
+            let price=null, name=line;
+            const pm = line.match(/(.+?)(\d{1,3}(?:\s\d{3})*[.,]?\d{0,2})\s*$/);
+            if (pm) { name=pm[1].trim(); price=parseFloat(pm[2].replace(/\s/g,'').replace(',','.')); }
+            if (!price||isNaN(price)||price<=0) { const em=line.match(/=\s*(\d+)/); if(em){price=parseFloat(em[1]);name=line.split('=')[0].trim();} }
+            if (!price||isNaN(price)||price<=0||price>1000000) return;
+            let quantity=null;
+            for (let p of qtyPatterns) { const qm=name.match(p); if(qm){quantity=qm[0];name=name.replace(qm[0],'').trim();break;} }
+            name=name.replace(/[\-=_+\[\]{}|\\;':",.\/<>?`~!@#$%^&*()]/g,' ').replace(/\s+/g,' ').trim();
+            if (name.length<2||/^\d+$/.test(name)) return;
+            items.push({name,price,quantity,splitType:'equal',shares:{}});
+        });
+        return items;
+    }
+
+    // ── Navigation ──
+    function showScreen(id) {
+        document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+        document.getElementById('screen-'+id).classList.add('active');
+    }
+
+    function showTrips() { currentTrip=null; renderTrips(); showScreen('trips'); }
+
+    function showTrip(id) {
+        if (id) currentTrip = trips.find(t=>t.id===id);
+        if (!currentTrip) { showTrips(); return; }
+        renderTrip();
+        showScreen('trip');
+    }
+
+    function initAddCheck() {
+        if (!currentTrip) return;
+        currentCheck = { id:Date.now(), name:'', total:0, payer:currentTrip.people[0], items:[] };
+        currentCheckIndex = null;
+        document.getElementById('add-check-title').textContent = 'Новый чек';
+        document.getElementById('check-name').value = '';
+        document.getElementById('check-total').value = '';
+        document.getElementById('ocr-loading').classList.add('hidden');
+        document.getElementById('photo-input').value = '';
+        renderPayerSelector();
+        renderItemsContainer();
+        showScreen('add-check');
+    }
+
+    function editCheck(idx) {
+        if (!currentTrip) return;
+        const check = currentTrip.checks[idx];
+        if (!check) return;
+        currentCheck = JSON.parse(JSON.stringify(check)); // deep copy
+        currentCheckIndex = idx;
+        document.getElementById('add-check-title').textContent = 'Редактировать чек';
+        document.getElementById('check-name').value = currentCheck.name || '';
+        document.getElementById('check-total').value = currentCheck.total || '';
+        document.getElementById('ocr-loading').classList.add('hidden');
+        renderPayerSelector();
+        renderItemsContainer();
+        showScreen('add-check');
+    }
+
+    function showItemSplit(index) {
+        if (!currentCheck||!currentCheck.items[index]) return;
+        currentItemIndex = index;
+        const item = currentCheck.items[index];
+        document.getElementById('split-item-name').textContent = item.name+(item.quantity?' ('+item.quantity+')':'');
+        document.getElementById('split-item-price').textContent = formatMoney(item.price);
+        splitType = item.splitType||'equal';
+        document.querySelectorAll('.split-type').forEach(t=>t.classList.toggle('active',t.dataset.type===splitType));
+        document.getElementById('split-weight-input').classList.toggle('hidden',splitType!=='weight');
+        document.getElementById('split-quantity-input').classList.toggle('hidden',splitType!=='quantity');
+        renderSplitPeople();
+        showScreen('item-split');
+    }
+
+    function showSettlement() { renderSettlement(); showScreen('settlement'); }
+
+    // ── Render Trips ──
+    function renderTrips() {
+        const c = document.getElementById('trips-list');
+        if (!trips?.length) {
+            c.innerHTML = `<div class="empty-state"><div class="empty-icon">🧾</div><div class="empty-title">Нет поездок</div><div class="empty-text">Создайте первую поездку, чтобы начать делить чеки</div><button class="btn btn-primary" onclick="showModal('new-trip')">Создать поездку</button></div>`;
+            return;
+        }
+        const icons=['🚗','🏖️','🏔️','🏡','✈️','🚂'];
+        c.innerHTML = trips.map(trip => {
+            const total=(trip.checks||[]).reduce((s,ch)=>s+(ch.total||0),0);
+            const icon=icons[Math.abs(trip.id)%icons.length];
+            return `<div class="trip-item">
+                <div class="trip-icon">${icon}</div>
+                <div class="trip-info" onclick="showTrip(${trip.id})">
+                    <div class="trip-name">${trip.name||'Без названия'}</div>
+                    <div class="trip-meta">${(trip.checks||[]).length} чеков · ${formatMoney(total)} · ${(trip.people||[]).length} чел.</div>
+                </div>
+                <button class="trip-delete" onclick="confirmDeleteTrip(${trip.id})">🗑</button>
+            </div>`;
+        }).join('');
+    }
+
+    // ── Render Trip Detail ──
+    function renderTrip() {
+        if (!currentTrip) return;
+        document.getElementById('trip-title').textContent = currentTrip.name||'Поездка';
+        const total=(currentTrip.checks||[]).reduce((s,c)=>s+(c.total||0),0);
+        document.getElementById('trip-total').textContent = formatMoney(total);
+
+        const balances = calculateBalances();
+        document.getElementById('trip-balance').innerHTML = Object.entries(balances).map(([name,amt])=>`
+            <div class="balance-row">
+                <div class="balance-name"><div class="balance-avatar">${(name||'?')[0]}</div><span>${name}</span></div>
+                <div class="balance-value ${amt>=0?'positive':'negative'}">${amt>=0?'+':''}${formatMoney(amt)}</div>
+            </div>`).join('');
+
+        document.getElementById('checks-list').innerHTML = (currentTrip.checks||[]).map((check,idx)=>`
+            <div class="check-item">
+                <div class="check-header">
+                    <div><div class="check-title">${check.name||'Без названия'}</div><div class="check-meta">${(check.items||[]).length} позиций</div></div>
+                    <div class="check-amount">${formatMoney(check.total||0)}</div>
+                </div>
+                <div class="check-payer">💳 Платил: ${check.payer||'?'}</div>
+                <div class="items-list">
+                    ${(check.items||[]).map(item=>`
+                        <div class="item-row">
+                            <div class="item-row-info">
+                                <div class="item-name">${item.name||'?'}${item.quantity?' <span style="color:var(--text-secondary)">('+item.quantity+')</span>':''}</div>
+                                <div class="item-split">${getSplitDescription(item)}</div>
+                            </div>
+                            <div class="item-price">${formatMoney(item.price||0)}</div>
+                        </div>`).join('')}
+                </div>
+                <div class="check-actions">
+                    <button class="check-action-btn check-action-edit" onclick="editCheck(${idx})">✏️ Редактировать</button>
+                    <button class="check-action-btn check-action-delete" onclick="confirmDeleteCheck(${idx})">🗑 Удалить</button>
+                </div>
+            </div>`).join('');
+    }
+
+    function getSplitDescription(item) {
+        if (!item) return 'Поровну';
+        switch(item.splitType) {
+            case 'equal':    return 'Поровну на всех';
+            case 'selected': return 'Только: '+Object.keys(item.shares||{}).join(', ');
+            case 'weight':   return 'По весу';
+            case 'quantity': return 'По штукам';
+            case 'personal': return 'Личное: '+(Object.keys(item.shares||{})[0]||'?');
+            default:         return 'Поровну';
+        }
+    }
+
+    // ── Balances ──
+    function calculateBalances() {
+        const bal={};
+        if (!currentTrip?.people) return bal;
+        currentTrip.people.forEach(p=>{ if(p) bal[p]=0; });
+        (currentTrip.checks||[]).forEach(check=>{
+            if (check.payer&&bal[check.payer]!==undefined) bal[check.payer]+=(check.total||0);
+            (check.items||[]).forEach(item=>{
+                const shares=calculateShares(item);
+                Object.entries(shares).forEach(([p,a])=>{ if(bal[p]!==undefined) bal[p]-=a; });
+            });
+        });
+        return bal;
+    }
+
+    function calculateShares(item) {
+        if (!item||!currentTrip?.people) return {};
+        const people=currentTrip.people;
+        const shares={};
+        switch(item.splitType) {
+            case 'equal': { const per=(item.price||0)/people.length; people.forEach(p=>{if(p)shares[p]=per;}); break; }
+            case 'selected': { const sel=Object.keys(item.shares||{}); const per=sel.length>0?(item.price||0)/sel.length:0; sel.forEach(p=>shares[p]=per); break; }
+            case 'weight': { const tw=Object.values(item.shares||{}).reduce((a,b)=>a+b,0); if(tw>0)Object.entries(item.shares||{}).forEach(([p,w])=>{shares[p]=(w/tw)*(item.price||0);}); break; }
+            case 'quantity': { const tq=Object.values(item.shares||{}).reduce((a,b)=>a+b,0); if(tq>0)Object.entries(item.shares||{}).forEach(([p,q])=>{shares[p]=(q/tq)*(item.price||0);}); break; }
+            case 'personal': { const o=Object.keys(item.shares||{})[0]||people[0]; if(o)shares[o]=item.price||0; break; }
+        }
+        return shares;
+    }
+
+    // ── Settlement ──
+    function renderSettlement() {
+        const balances=calculateBalances();
+        const debtors=[],creditors=[];
+        Object.entries(balances).forEach(([name,amt])=>{
+            if(amt>0.01) creditors.push({name,amount:amt});
+            if(amt<-0.01) debtors.push({name,amount:-amt});
+        });
+        const transactions=[];
+        let d=0,c=0;
+        const dc=debtors.map(x=>({...x})),cc=creditors.map(x=>({...x}));
+        while(d<dc.length&&c<cc.length){
+            const amt=Math.min(dc[d].amount,cc[c].amount);
+            transactions.push({from:dc[d].name,to:cc[c].name,amount:amt});
+            dc[d].amount-=amt; cc[c].amount-=amt;
+            if(dc[d].amount<0.01)d++;
+            if(cc[c].amount<0.01)c++;
+        }
+
+        // per-person totals
+        const balances2=calculateBalances();
+        const perPersonHtml = Object.entries(balances2).map(([name,amt])=>`
+            <div class="per-person-row">
+                <div class="balance-name"><div class="balance-avatar">${(name||'?')[0]}</div><span class="per-person-name">${name}</span></div>
+                <div class="balance-value ${amt>=0?'positive':'negative'}">${amt>=0?'+':''}${formatMoney(amt)}</div>
+            </div>`).join('');
+
+        const container=document.getElementById('settlement-list');
+        if (!transactions.length) {
+            container.innerHTML=`<div class="card" style="margin-bottom:16px;">${perPersonHtml}</div><div class="empty-state"><div class="empty-icon">🎉</div><div class="empty-title">Всё честно!</div><div class="empty-text">Никто никому не должен</div></div>`;
+            return;
+        }
+        container.innerHTML=
+            `<div class="card" style="margin-bottom:16px;"><div class="card-title" style="margin-bottom:12px;">Итог по каждому</div>${perPersonHtml}</div>`+
+            `<div class="card" style="margin-bottom:16px;"><div class="card-title">Оптимальные переводы</div><div class="card-subtitle" style="margin-bottom:12px;">Минимум транзакций</div>`+
+            transactions.map(t=>`
+                <div class="transaction-row">
+                    <div class="transaction-from"><div class="balance-avatar">${(t.from||'?')[0]}</div><span>${t.from}</span></div>
+                    <div class="transaction-arrow">→</div>
+                    <div class="transaction-to"><div class="balance-avatar">${(t.to||'?')[0]}</div><span>${t.to}</span></div>
+                    <div class="transaction-amount">${formatMoney(t.amount||0)}</div>
+                </div>`).join('')+`</div>`;
+    }
+
+    // ── Check rendering ──
+    function renderPayerSelector() {
+        if (!currentTrip?.people) return;
+        document.getElementById('payer-selector').innerHTML=`<div class="people-grid">`+currentTrip.people.map(p=>`
+            <div class="person-chip ${currentCheck?.payer===p?'selected':''}" onclick="selectPayer('${p}')">
+                <div class="avatar">${(p||'?')[0]}</div>
+                <div class="name">${p}</div>
+            </div>`).join('')+`</div>`;
+    }
+
+    function selectPayer(name) { if(currentCheck){currentCheck.payer=name;renderPayerSelector();} }
+
+    function renderItemsContainer() {
+        const c=document.getElementById('items-container');
+        if (!currentCheck?.items?.length) {
+            c.innerHTML='<div style="text-align:center;color:var(--text-secondary);padding:20px;">Добавьте позиции из чека</div>';
+            return;
+        }
+        c.innerHTML=currentCheck.items.map((item,i)=>`
+            <div class="card" style="cursor:pointer;">
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+                    <div style="flex:1;min-width:0;" onclick="showItemSplit(${i})">
+                        <div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${item.name||'?'}${item.quantity?' <span style="color:var(--text-secondary)">('+item.quantity+')</span>':''}</div>
+                        <div style="font-size:13px;color:var(--text-secondary);">${getSplitDescription(item)}</div>
+                    </div>
+                    <div style="font-weight:700;color:var(--accent);white-space:nowrap;">${formatMoney(item.price||0)}</div>
+                    <button class="item-delete-btn" onclick="deleteItem(${i})">×</button>
+                </div>
+            </div>`).join('');
+    }
+
+    // ── Add item modal ──
+    function confirmAddItem() {
+        const name=document.getElementById('new-item-name').value.trim();
+        const price=parseFloat(document.getElementById('new-item-price').value);
+        const qty=document.getElementById('new-item-qty').value.trim();
+        if (!name){showToast('Введите название');return;}
+        if (!price||price<=0){showToast('Введите корректную сумму');return;}
+        if (!currentCheck) return;
+        currentCheck.items.push({name,price,quantity:qty||null,splitType:'equal',shares:{}});
+        const total=currentCheck.items.reduce((s,i)=>s+(i.price||0),0);
+        document.getElementById('check-total').value=total;
+        closeModal();
+        renderItemsContainer();
+        document.getElementById('new-item-name').value='';
+        document.getElementById('new-item-price').value='';
+        document.getElementById('new-item-qty').value='';
+        showItemSplit(currentCheck.items.length-1);
+    }
+
+    function deleteItem(idx) {
+        if (!currentCheck) return;
+        currentCheck.items.splice(idx,1);
+        const total=currentCheck.items.reduce((s,i)=>s+(i.price||0),0);
+        document.getElementById('check-total').value=total||'';
+        renderItemsContainer();
+        showToast('Позиция удалена');
+    }
+
+    // ── Item split ──
+    function setSplitType(type) {
+        splitType=type;
+        document.querySelectorAll('.split-type').forEach(t=>t.classList.toggle('active',t.dataset.type===type));
+        document.getElementById('split-weight-input').classList.toggle('hidden',type!=='weight');
+        document.getElementById('split-quantity-input').classList.toggle('hidden',type!=='quantity');
+        renderSplitPeople();
+    }
+
+    function renderSplitPeople() {
+        const c=document.getElementById('split-people-container');
+        if (!currentCheck||currentItemIndex===null||!currentCheck.items[currentItemIndex]) return;
+        const item=currentCheck.items[currentItemIndex];
+        const people=currentTrip?.people||[];
+        if (splitType==='equal') {
+            c.innerHTML=`<div style="color:var(--text-secondary);text-align:center;padding:20px;">Делится поровну на всех (${people.length} чел.)</div>`;
+        } else if (splitType==='selected') {
+            c.innerHTML=`<div class="section-label">Выберите, кто ел/пил:</div><div class="people-grid">${people.map(p=>`
+                <div class="person-chip ${item.shares?.[p]?'selected':''}" onclick="toggleSelectedPerson('${p}')">
+                    <div class="avatar">${(p||'?')[0]}</div><div class="name">${p}</div>
+                </div>`).join('')}</div>`;
+        } else if (splitType==='personal') {
+            c.innerHTML=`<div style="color:var(--text-secondary);text-align:center;padding:12px 20px 4px;">Платит только один человек</div>
+                <div class="section-label">Кому лично:</div><div class="people-grid">${people.map(p=>`
+                <div class="person-chip ${item.shares?.[p]?'selected':''}" onclick="setPersonalOwner('${p}')">
+                    <div class="avatar">${(p||'?')[0]}</div><div class="name">${p}</div>
+                </div>`).join('')}</div>`;
+        } else { c.innerHTML=''; }
+
+        if (splitType==='weight') {
+            document.getElementById('weight-inputs').innerHTML=people.map(p=>`
+                <div class="quantity-input">
+                    <div class="balance-avatar">${(p||'?')[0]}</div>
+                    <span style="flex:1;">${p}</span>
+                    <input type="number" class="qty-field" id="weight-${p}" value="${item.shares?.[p]||0}" step="0.1" inputmode="decimal">
+                    <span class="qty-label">кг</span>
+                </div>`).join('');
+        }
+        if (splitType==='quantity') {
+            document.getElementById('quantity-inputs').innerHTML=people.map(p=>`
+                <div class="quantity-input">
+                    <div class="balance-avatar">${(p||'?')[0]}</div>
+                    <span style="flex:1;">${p}</span>
+                    <input type="number" class="qty-field" id="qty-${p}" value="${item.shares?.[p]||0}" step="1" inputmode="numeric">
+                    <span class="qty-label">шт</span>
+                </div>`).join('');
+        }
+    }
+
+    function setPersonalOwner(name) {
+        if (!currentCheck||currentItemIndex===null) return;
+        currentCheck.items[currentItemIndex].shares={[name]:1};
+        renderSplitPeople();
+    }
+
+    function toggleSelectedPerson(name) {
+        if (!currentCheck||currentItemIndex===null) return;
+        const item=currentCheck.items[currentItemIndex];
+        if (!item.shares) item.shares={};
+        if (item.shares[name]) delete item.shares[name]; else item.shares[name]=1;
+        renderSplitPeople();
+    }
+
+    function saveItemSplit() {
+        if (!currentCheck||currentItemIndex===null) return;
+        const item=currentCheck.items[currentItemIndex];
+        item.splitType=splitType;
+        if (splitType==='weight') {
+            item.shares={};
+            (currentTrip?.people||[]).forEach(p=>{ const el=document.getElementById('weight-'+p); const v=el?parseFloat(el.value):0; if(v>0)item.shares[p]=v; });
+        } else if (splitType==='quantity') {
+            item.shares={};
+            (currentTrip?.people||[]).forEach(p=>{ const el=document.getElementById('qty-'+p); const v=el?parseInt(el.value):0; if(v>0)item.shares[p]=v; });
+        } else if (splitType==='personal') {
+            if (!item.shares||!Object.keys(item.shares).length) { const f=currentTrip?.people?.[0]; if(f)item.shares={[f]:1}; }
+        }
+        renderItemsContainer();
+        showScreen('add-check');
+    }
+
+    function saveCheck() {
+        if (!currentCheck) return;
+        currentCheck.name=document.getElementById('check-name').value||'Без названия';
+        currentCheck.total=parseFloat(document.getElementById('check-total').value)||(currentCheck.items||[]).reduce((s,i)=>s+(i.price||0),0);
+        if (!currentCheck.items?.length){showToast('Добавьте хотя бы одну позицию');return;}
+        if (!currentTrip) return;
+        if (!currentTrip.checks) currentTrip.checks=[];
+        if (currentCheckIndex!==null) {
+            currentTrip.checks[currentCheckIndex]=currentCheck; // update existing
+            showToast('Чек обновлён ✓');
+        } else {
+            currentTrip.checks.push(currentCheck);
+            showToast('Чек сохранён ✓');
+        }
+        saveTrips();
+        showTrip();
+    }
+
+    // ── Delete ──
+    function confirmDeleteTrip(id) {
+        const trip=trips.find(t=>t.id===id);
+        if (!trip) return;
+        showConfirm('Удалить поездку?', `«${trip.name}» и все её чеки будут удалены.`, ()=>deleteTrip(id));
+    }
+
+    function deleteTrip(id) {
+        trips=trips.filter(t=>t.id!==id);
+        saveTrips();
+        showToast('Поездка удалена');
+        showTrips();
+    }
+
+    function confirmDeleteCheck(idx) {
+        const check=currentTrip?.checks[idx];
+        if (!check) return;
+        showConfirm('Удалить чек?', `«${check.name}» будет удалён безвозвратно.`, ()=>deleteCheck(idx));
+    }
+
+    function deleteCheck(idx) {
+        currentTrip.checks.splice(idx,1);
+        saveTrips();
+        showToast('Чек удалён');
+        renderTrip();
+    }
+
+    // ── Edit Trip ──
+    function showEditTrip() {
+        if (!currentTrip) return;
+        document.getElementById('edit-trip-name').value=currentTrip.name||'';
+        editPeople=[...currentTrip.people];
+        renderEditPeopleTags();
+        showModal('edit-trip');
+    }
+
+    function renderEditPeopleTags() {
+        document.getElementById('edit-people-tags').innerHTML=editPeople.map((p,i)=>`
+            <span class="person-tag">
+                ${p}
+                <button class="person-tag-remove" onclick="removeEditPerson(${i})">×</button>
+            </span>`).join('');
+    }
+
+    function addEditPerson() {
+        const inp=document.getElementById('edit-new-person');
+        const name=inp.value.trim();
+        if (!name){showToast('Введите имя');return;}
+        if (editPeople.includes(name)){showToast('Уже есть');return;}
+        editPeople.push(name);
+        inp.value='';
+        renderEditPeopleTags();
+    }
+
+    function removeEditPerson(idx) {
+        if (editPeople.length<=2){showToast('Минимум 2 участника');return;}
+        editPeople.splice(idx,1);
+        renderEditPeopleTags();
+    }
+
+    function saveEditTrip() {
+        const name=document.getElementById('edit-trip-name').value.trim();
+        if (!name){showToast('Введите название');return;}
+        if (editPeople.length<2){showToast('Минимум 2 участника');return;}
+        currentTrip.name=name;
+        currentTrip.people=editPeople;
+        saveTrips();
+        closeModal();
+        showToast('Поездка обновлена ✓');
+        renderTrip();
+    }
+
+    // ── Edit Check (header info only via modal) ──
+    function showEditCheckModal(idx) {
+        const check=currentTrip?.checks[idx];
+        if (!check) return;
+        document.getElementById('edit-check-name').value=check.name||'';
+        document.getElementById('edit-check-total').value=check.total||'';
+        // payer selector
+        document.getElementById('edit-check-payer').innerHTML=`<div class="people-grid">`+
+            (currentTrip.people||[]).map(p=>`
+            <div class="person-chip ${check.payer===p?'selected':''}" onclick="selectEditPayer('${p}',${idx})">
+                <div class="avatar">${(p||'?')[0]}</div><div class="name">${p}</div>
+            </div>`).join('')+`</div>`;
+        document.getElementById('edit-check-payer').dataset.checkIdx=idx;
+        showModal('edit-check');
+    }
+
+    function selectEditPayer(name, idx) {
+        if (currentTrip?.checks[idx]) currentTrip.checks[idx].payer=name;
+        const payer_c=document.getElementById('edit-check-payer');
+        payer_c.querySelectorAll('.person-chip').forEach(chip=>{
+            chip.classList.toggle('selected',chip.querySelector('.name').textContent===name);
+        });
+    }
+
+    function saveEditCheck() {
+        const idx=parseInt(document.getElementById('edit-check-payer').dataset.checkIdx);
+        const check=currentTrip?.checks[idx];
+        if (!check) return;
+        const name=document.getElementById('edit-check-name').value.trim();
+        const total=parseFloat(document.getElementById('edit-check-total').value);
+        if (!name){showToast('Введите название');return;}
+        check.name=name;
+        if (total>0) check.total=total;
+        saveTrips();
+        closeModal();
+        showToast('Чек обновлён ✓');
+        renderTrip();
+    }
+
+    // ── Modals ──
+    function showModal(id) { const m=document.getElementById('modal-'+id); if(m)m.classList.add('active'); }
+    function closeModal() { document.querySelectorAll('.modal-overlay').forEach(m=>m.classList.remove('active')); }
+    function handleOverlayClick(e) { if(e.target===e.currentTarget)closeModal(); }
+
+    function addPersonInput() {
+        const c=document.getElementById('trip-people-inputs');
+        const n=c.children.length+1;
+        const inp=document.createElement('input');
+        inp.type='text'; inp.className='input'; inp.placeholder='Имя '+n;
+        c.appendChild(inp);
+    }
+
+    function createTrip() {
+        const name=document.getElementById('trip-name-input').value.trim();
+        if (!name){showToast('Введите название поездки');return;}
+        const people=Array.from(document.querySelectorAll('#trip-people-inputs input')).map(e=>e.value.trim()).filter(Boolean);
+        if (people.length<2){showToast('Нужно минимум 2 участника');return;}
+        const trip={id:Date.now(),name,people,checks:[]};
+        trips.push(trip);
+        saveTrips();
+        closeModal();
+        document.getElementById('trip-name-input').value='';
+        document.querySelectorAll('#trip-people-inputs input').forEach(e=>e.value='');
+        showTrip(trip.id);
+    }
+
+    // ── OCR ──
+    async function handlePhoto(event) {
+        const file=event.target.files[0];
+        if (!file) return;
+        event.target.value='';
+        document.getElementById('ocr-loading').classList.remove('hidden');
+        document.getElementById('manual-entry').style.opacity='0.4';
+        try {
+            const result=await Tesseract.recognize(file,'rus+eng',{logger:m=>console.log(m)});
+            const items=smartParseOCR(result.data.text);
+            if (items?.length>0&&currentCheck) {
+                currentCheck.items=items;
+                const total=items.reduce((s,i)=>s+(i.price||0),0);
+                document.getElementById('check-total').value=total;
+                renderItemsContainer();
+                showToast(`Распознано ${items.length} позиций — проверьте`);
+            } else { showToast('Не удалось распознать — добавьте вручную'); }
+        } catch(e) { console.error(e); showToast('Ошибка распознавания — добавьте вручную'); }
+        document.getElementById('ocr-loading').classList.add('hidden');
+        document.getElementById('manual-entry').style.opacity='1';
+    }
+
+    // ── Share ──
+    function shareSettlement() {
+        if (!currentTrip) return;
+        const balances=calculateBalances();
+        const debtors=[],creditors=[];
+        Object.entries(balances).forEach(([name,amt])=>{
+            if(amt>0.01)creditors.push({name,amount:amt});
+            if(amt<-0.01)debtors.push({name,amount:-amt});
+        });
+        const transactions=[];
+        let d=0,c=0;
+        const dc=debtors.map(x=>({...x})),cc=creditors.map(x=>({...x}));
+        while(d<dc.length&&c<cc.length){
+            const amt=Math.min(dc[d].amount,cc[c].amount);
+            transactions.push({from:dc[d].name,to:cc[c].name,amount:amt});
+            dc[d].amount-=amt; cc[c].amount-=amt;
+            if(dc[d].amount<0.01)d++; if(cc[c].amount<0.01)c++;
+        }
+        let text=`💰 Делёж: ${currentTrip.name||'Поездка'}\n\n`;
+        Object.entries(balances).forEach(([name,amt])=>{
+            if(Math.abs(amt)>0.01) text+=`${name}: ${amt>=0?'+':''}${formatMoney(amt)}\n`;
+        });
+        text+='\nПереводы:\n';
+        transactions.forEach(t=>{ text+=`${t.from} → ${t.to}: ${formatMoney(t.amount)}\n`; });
+
+        const copy = (txt) => {
+            if (navigator.clipboard) {
+                navigator.clipboard.writeText(txt).then(()=>showToast('Скопировано! Вставьте в чат 📋')).catch(()=>fallbackCopy(txt));
+            } else { fallbackCopy(txt); }
+        };
+        const fallbackCopy = (txt) => {
+            const ta=document.createElement('textarea');
+            ta.value=txt; ta.style.cssText='position:fixed;opacity:0';
+            document.body.appendChild(ta); ta.select();
+            try{document.execCommand('copy');showToast('Скопировано! Вставьте в чат 📋');}
+            catch{showToast('Скопируйте текст вручную');}
+            document.body.removeChild(ta);
+        };
+
+        if (navigator.share) {
+            navigator.share({text}).catch(()=>copy(text));
+        } else { copy(text); }
+    }
+
+    // ── Init ──
+    loadTrips(()=>showTrips());
+</script>
+</body>
+</html>
