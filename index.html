@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>SplitCheck - Делёж счётов</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4/dist/tesseract.min.js"></script>
+    <!-- Tesseract убран, используем Gemini API -->
     <style>
         * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
         :root {
@@ -913,26 +913,103 @@
         showTrip(trip.id);
     }
 
-    // ── OCR ──
+    // ── OCR через Gemini API ──
+    const GEMINI_API_KEY = 'ВСТАВЬ_СВОЙ_КЛЮЧ_СЮДА';
+
     async function handlePhoto(event) {
-        const file=event.target.files[0];
+        const file = event.target.files[0];
         if (!file) return;
-        event.target.value='';
+        event.target.value = '';
+
         document.getElementById('ocr-loading').classList.remove('hidden');
-        document.getElementById('manual-entry').style.opacity='0.4';
+        document.getElementById('manual-entry').style.opacity = '0.4';
+
         try {
-            const result=await Tesseract.recognize(file,'rus+eng',{logger:m=>console.log(m)});
-            const items=smartParseOCR(result.data.text);
-            if (items?.length>0&&currentCheck) {
-                currentCheck.items=items;
-                const total=items.reduce((s,i)=>s+(i.price||0),0);
-                document.getElementById('check-total').value=total;
+            // Конвертируем фото в base64
+            const base64 = await new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(reader.result.split(',')[1]);
+                reader.onerror = reject;
+                reader.readAsDataURL(file);
+            });
+
+            const response = await fetch(
+                `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`,
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        contents: [{
+                            parts: [
+                                {
+                                    text: `Это фото кассового чека. Распознай все позиции товаров или блюд.
+Верни ТОЛЬКО JSON массив без пояснений и без markdown, вот так:
+[{"name":"Название позиции","price":100,"quantity":"2 шт"},{"name":"Другая позиция","price":50,"quantity":null}]
+Правила:
+- price это число (только цифры, без знаков валюты)
+- quantity это строка с количеством или null если не указано
+- НЕ включай: итого, сдачу, скидки, сервисный сбор, НДС, чаевые
+- Если цена указана за штуку и есть количество — умножь и укажи итоговую цену`
+                                },
+                                {
+                                    inline_data: {
+                                        mime_type: file.type || 'image/jpeg',
+                                        data: base64
+                                    }
+                                }
+                            ]
+                        }],
+                        generationConfig: {
+                            temperature: 0.1
+                        }
+                    })
+                }
+            );
+
+            if (!response.ok) {
+                const err = await response.json();
+                console.error('Gemini error:', err);
+                throw new Error(err.error?.message || 'API error');
+            }
+
+            const data = await response.json();
+            const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+            console.log('Gemini response:', text);
+
+            // Чистим от markdown если есть
+            const clean = text.replace(/```json\n?|```\n?/g, '').trim();
+            const parsed = JSON.parse(clean);
+
+            if (parsed?.length > 0 && currentCheck) {
+                currentCheck.items = parsed
+                    .map(item => ({
+                        name: String(item.name || '').trim(),
+                        price: parseFloat(item.price) || 0,
+                        quantity: item.quantity ? String(item.quantity) : null,
+                        splitType: 'equal',
+                        shares: {}
+                    }))
+                    .filter(item => item.price > 0 && item.name.length > 0);
+
+                const total = currentCheck.items.reduce((s, i) => s + i.price, 0);
+                document.getElementById('check-total').value = total;
                 renderItemsContainer();
-                showToast(`Распознано ${items.length} позиций — проверьте`);
-            } else { showToast('Не удалось распознать — добавьте вручную'); }
-        } catch(e) { console.error(e); showToast('Ошибка распознавания — добавьте вручную'); }
+                showToast(`Распознано ${currentCheck.items.length} позиций — проверьте`);
+            } else {
+                showToast('Позиции не найдены — добавьте вручную');
+            }
+
+        } catch(e) {
+            console.error('OCR error:', e);
+            if (e.message?.includes('API_KEY')) {
+                showToast('Неверный API ключ Gemini');
+            } else {
+                showToast('Ошибка распознавания — добавьте вручную');
+            }
+        }
+
         document.getElementById('ocr-loading').classList.add('hidden');
-        document.getElementById('manual-entry').style.opacity='1';
+        document.getElementById('manual-entry').style.opacity = '1';
     }
 
     // ── Share ──
