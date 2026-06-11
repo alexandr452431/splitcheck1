@@ -308,6 +308,8 @@
         <button class="btn btn-primary" onclick="shareSettlement()" style="margin-top:16px;">📤 Скопировать и поделиться</button>
         <button class="btn btn-secondary" onclick="showTrip()">← Вернуться и изменить</button>
     </div>
+
+
 </div>
 
 <script>
@@ -340,6 +342,7 @@
         btn.onclick = () => { closeModal(); onOk(); };
         showModal('confirm');
     }
+
 
     // ── Storage ──
     function saveTrips() {
@@ -913,8 +916,8 @@
         showTrip(trip.id);
     }
 
-    // ── OCR через OpenRouter API ──
-    const OPENROUTER_API_KEY = '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';
+    // ── OCR через Cloudflare Worker + OpenRouter ──
+    const WORKER_URL = 'https://splitcheck-ocr.alex452431.workers.dev/';
 
     async function handlePhoto(event) {
         const file = event.target.files[0];
@@ -925,61 +928,23 @@
         document.getElementById('manual-entry').style.opacity = '0.4';
 
         try {
-            const base64 = await new Promise((resolve, reject) => {
-                const reader = new FileReader();
-                reader.onload = () => resolve(reader.result);
-                reader.onerror = reject;
-                reader.readAsDataURL(file);
-            });
+            const formData = new FormData();
+            formData.append('file', file);
 
-            const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+            const response = await fetch(WORKER_URL, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
-                    'HTTP-Referer': 'https://splitcheck.app',
-                    'X-Title': 'SplitCheck'
-                },
-                body: JSON.stringify({
-                    model: 'google/gemini-2.0-flash-exp:free',
-                    messages: [{
-                        role: 'user',
-                        content: [
-                            {
-                                type: 'image_url',
-                                image_url: { url: base64 }
-                            },
-                            {
-                                type: 'text',
-                                text: 'Это фото кассового чека. Распознай все позиции товаров или блюд. Верни ТОЛЬКО валидный JSON массив без markdown и без пояснений. Формат: [{"name":"Название","price":100,"quantity":"2 шт"}]. Правила: price — число без валюты; quantity — строка или null; НЕ включай итого, сдачу, скидки, НДС, сервисный сбор.'
-                            }
-                        ]
-                    }],
-                    temperature: 0.1,
-                    max_tokens: 2048
-                })
+                body: formData
             });
 
             const data = await response.json();
+            console.log('Worker response:', data);
 
-            if (!response.ok) {
-                const msg = data.error?.message || 'Ошибка API';
-                console.error('OpenRouter error:', data);
-                showToast('Ошибка: ' + msg);
+            if (!response.ok || data.error) {
+                showToast('Ошибка: ' + (data.error || 'сервер недоступен'));
                 return;
             }
 
-            const rawText = data.choices?.[0]?.message?.content || '';
-            console.log('OpenRouter raw:', rawText);
-
-            const jsonMatch = rawText.match(/\[[\s\S]*\]/);
-            if (!jsonMatch) {
-                console.error('No JSON in response:', rawText);
-                showToast('Не удалось распознать — добавьте вручную');
-                return;
-            }
-
-            const parsed = JSON.parse(jsonMatch[0]);
+            const parsed = data.items;
 
             if (parsed?.length > 0 && currentCheck) {
                 currentCheck.items = parsed
@@ -1002,11 +967,68 @@
 
         } catch(e) {
             console.error('OCR error:', e);
-            showToast('Ошибка: ' + (e.message || 'попробуйте ещё раз'));
+            showToast('Ошибка распознавания — добавьте вручную');
         }
 
         document.getElementById('ocr-loading').classList.add('hidden');
         document.getElementById('manual-entry').style.opacity = '1';
+    }
+
+    function parseReceiptText(text) {
+        const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 1);
+        const items = [];
+
+        const ignoreWords = ['кассир','дата','время','инн','кпп','огрн','итого','всего',
+            'сумма','наличными','безналичными','сдача','приход','расход','фп','фд','фн',
+            'заказ','стол','гость','официант','спасибо','qr','кассовый','чек','смена',
+            'кассовая','receipt','total','cash','change','tax','ндс'];
+
+        const qtyPatterns = [
+            /(\d+[.,]?\d*)\s*(кг|г|гр|шт|штук|л|мл|уп|порц|бут|пак)/i,
+            /(\d+)\s*[xхХX]\s*\d/i
+        ];
+
+        lines.forEach(line => {
+            if (!/\d/.test(line)) return;
+            const ll = line.toLowerCase();
+            for (const w of ignoreWords) if (ll.includes(w)) return;
+            if (/^\d{2}[./]\d{2}[./]\d{2,4}/.test(line)) return;
+            if (/^\d{2}:\d{2}/.test(line)) return;
+            if (line.replace(/\D/g,'').length > 10) return; // похоже на штрихкод
+
+            let name = line;
+            let price = null;
+
+            // Ищем цену в конце строки
+            const priceMatch = line.match(/^(.+?)\s+(\d{1,6}[.,]\d{2}|\d{1,6})\s*$/);
+            if (priceMatch) {
+                name = priceMatch[1].trim();
+                price = parseFloat(priceMatch[2].replace(',', '.'));
+            }
+
+            // Ищем через =
+            if (!price) {
+                const eqMatch = line.match(/=\s*(\d+[.,]?\d*)/);
+                if (eqMatch) { price = parseFloat(eqMatch[1].replace(',','.')); name = line.split('=')[0].trim(); }
+            }
+
+            if (!price || isNaN(price) || price <= 0 || price > 500000) return;
+
+            // Извлекаем количество
+            let quantity = null;
+            for (const p of qtyPatterns) {
+                const m = name.match(p);
+                if (m) { quantity = m[0]; name = name.replace(m[0], '').trim(); break; }
+            }
+
+            // Чистим название
+            name = name.replace(/[^\wа-яёА-ЯЁa-zA-Z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+            if (name.length < 2 || /^\d+$/.test(name)) return;
+
+            items.push({ name, price, quantity, splitType: 'equal', shares: {} });
+        });
+
+        return items;
     }
 
     // ── Share ──
