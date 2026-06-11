@@ -387,34 +387,7 @@
         saveTrips();
     }
 
-    // ── OCR ──
-    function smartParseOCR(text) {
-        const lines = text.split('\n').map(l=>l.trim()).filter(l=>l.length>0);
-        const items = [];
-        const ignoreWords = ['кассир','дата','время','инн','кпп','огрн','итого','всего','сумма','наличными','безналичными','сдача','чек','приход','расход','фп','фд','фн','заказ','стол','гость','официант','спасибо','ждем','снова','qr','код','site','www','http','email','тел','телефон','адрес','лицензия'];
-        const qtyPatterns = [
-            /(\d+[.,]?\d*)\s*(кг|г|гр|шт|штук|шт\.|л|мл|уп|упак|порц|порций|бут|бутылок|банок|пак|пакетов|литров|кг\.)/i,
-            /(\d+)\s*x\s*(\d+)/i, /x\s*(\d+)/i
-        ];
-        lines.forEach(line => {
-            if (!/\d/.test(line)) return;
-            const ll = line.toLowerCase();
-            for (let w of ignoreWords) if (ll.includes(w)) return;
-            if (/^\d{2}[./]\d{2}[./]\d{2,4}$/.test(line)) return;
-            if (/^\d{2}:\d{2}/.test(line)) return;
-            let price=null, name=line;
-            const pm = line.match(/(.+?)(\d{1,3}(?:\s\d{3})*[.,]?\d{0,2})\s*$/);
-            if (pm) { name=pm[1].trim(); price=parseFloat(pm[2].replace(/\s/g,'').replace(',','.')); }
-            if (!price||isNaN(price)||price<=0) { const em=line.match(/=\s*(\d+)/); if(em){price=parseFloat(em[1]);name=line.split('=')[0].trim();} }
-            if (!price||isNaN(price)||price<=0||price>1000000) return;
-            let quantity=null;
-            for (let p of qtyPatterns) { const qm=name.match(p); if(qm){quantity=qm[0];name=name.replace(qm[0],'').trim();break;} }
-            name=name.replace(/[\-=_+\[\]{}|\\;':",.\/<>?`~!@#$%^&*()]/g,' ').replace(/\s+/g,' ').trim();
-            if (name.length<2||/^\d+$/.test(name)) return;
-            items.push({name,price,quantity,splitType:'equal',shares:{}});
-        });
-        return items;
-    }
+
 
     // ── Navigation ──
     function showScreen(id) {
@@ -502,7 +475,7 @@
     function renderTrip() {
         if (!currentTrip) return;
         document.getElementById('trip-title').textContent = currentTrip.name||'Поездка';
-        const total=(currentTrip.checks||[]).reduce((s,c)=>s+(c.total||0),0);
+        const total=(currentTrip.checks||[]).reduce((sum,ch)=>sum+(ch.total||0),0);
         document.getElementById('trip-total').textContent = formatMoney(total);
 
         const balances = calculateBalances();
@@ -917,7 +890,7 @@
     }
 
     // ── OCR через Cloudflare Worker + OpenRouter ──
-    const WORKER_URL = 'https://splitcheck-ocr.alex452431.workers.dev/';
+    const WORKER_URL = 'https://splitcheck-ocr.alex452431.workers.dev';
 
     async function handlePhoto(event) {
         const file = event.target.files[0];
@@ -974,62 +947,7 @@
         document.getElementById('manual-entry').style.opacity = '1';
     }
 
-    function parseReceiptText(text) {
-        const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 1);
-        const items = [];
 
-        const ignoreWords = ['кассир','дата','время','инн','кпп','огрн','итого','всего',
-            'сумма','наличными','безналичными','сдача','приход','расход','фп','фд','фн',
-            'заказ','стол','гость','официант','спасибо','qr','кассовый','чек','смена',
-            'кассовая','receipt','total','cash','change','tax','ндс'];
-
-        const qtyPatterns = [
-            /(\d+[.,]?\d*)\s*(кг|г|гр|шт|штук|л|мл|уп|порц|бут|пак)/i,
-            /(\d+)\s*[xхХX]\s*\d/i
-        ];
-
-        lines.forEach(line => {
-            if (!/\d/.test(line)) return;
-            const ll = line.toLowerCase();
-            for (const w of ignoreWords) if (ll.includes(w)) return;
-            if (/^\d{2}[./]\d{2}[./]\d{2,4}/.test(line)) return;
-            if (/^\d{2}:\d{2}/.test(line)) return;
-            if (line.replace(/\D/g,'').length > 10) return; // похоже на штрихкод
-
-            let name = line;
-            let price = null;
-
-            // Ищем цену в конце строки
-            const priceMatch = line.match(/^(.+?)\s+(\d{1,6}[.,]\d{2}|\d{1,6})\s*$/);
-            if (priceMatch) {
-                name = priceMatch[1].trim();
-                price = parseFloat(priceMatch[2].replace(',', '.'));
-            }
-
-            // Ищем через =
-            if (!price) {
-                const eqMatch = line.match(/=\s*(\d+[.,]?\d*)/);
-                if (eqMatch) { price = parseFloat(eqMatch[1].replace(',','.')); name = line.split('=')[0].trim(); }
-            }
-
-            if (!price || isNaN(price) || price <= 0 || price > 500000) return;
-
-            // Извлекаем количество
-            let quantity = null;
-            for (const p of qtyPatterns) {
-                const m = name.match(p);
-                if (m) { quantity = m[0]; name = name.replace(m[0], '').trim(); break; }
-            }
-
-            // Чистим название
-            name = name.replace(/[^\wа-яёА-ЯЁa-zA-Z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
-            if (name.length < 2 || /^\d+$/.test(name)) return;
-
-            items.push({ name, price, quantity, splitType: 'equal', shares: {} });
-        });
-
-        return items;
-    }
 
     // ── Share ──
     function shareSettlement() {
